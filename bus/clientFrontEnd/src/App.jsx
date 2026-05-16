@@ -339,32 +339,39 @@ function LivePage({ buses, user }) {
 // Schedule Page
 // ─────────────────────────────────────────────────────────────────────────────
 function SchedulePage({ buses }) {
-  const [busId, setBusId] = useState("");
-  const [schedule, setSchedule] = useState([]);
-  const [nextDep, setNextDep] = useState(null);
+  const [direction, setDirection] = useState("TO_UNIVERSITY");
+  const [allSchedules, setAllSchedules] = useState({}); // busId -> schedule[]
   const [loading, setLoading] = useState(false);
-  const [filterDir, setFilterDir] = useState("ALL");
-  const [filterStop, setFilterStop] = useState("Vavuniya");
 
-  const loadSchedule = async (id) => {
-    if (!id) { setSchedule([]); setNextDep(null); return; }
+  // Load schedules for every bus once on mount
+  useEffect(() => {
+    if (buses.length === 0) return;
     setLoading(true);
-    const { ok, data } = await busApi.getSchedule(id);
-    setLoading(false);
-    if (ok) setSchedule(data.schedule || []);
-  };
+    Promise.all(
+      buses.map(async (bus) => {
+        const { ok, data } = await busApi.getSchedule(bus._id);
+        return { busId: bus._id, schedule: ok ? (data.schedule || []) : [] };
+      })
+    ).then((results) => {
+      const map = {};
+      results.forEach(({ busId, schedule }) => { map[busId] = schedule; });
+      setAllSchedules(map);
+      setLoading(false);
+    });
+  }, [buses]);
 
-  const loadNextDep = async () => {
-    if (!busId || !filterStop || filterDir === "ALL") { setNextDep(null); return; }
-    const { ok, data } = await busApi.nextDeparture(busId, filterDir, filterStop);
-    if (ok) setNextDep(data);
-    else setNextDep(null);
-  };
-
-  useEffect(() => { loadSchedule(busId); }, [busId]);
-  useEffect(() => { loadNextDep(); }, [busId, filterDir, filterStop]);
-
-  const filtered = filterDir === "ALL" ? schedule : schedule.filter(t => t.direction === filterDir);
+  // Collect all trips across all buses that match selected direction,
+  // attaching bus info, then sort by first stop time
+  const directionTrips = buses.flatMap((bus) => {
+    const trips = allSchedules[bus._id] || [];
+    return trips
+      .filter((trip) => trip.direction === direction)
+      .map((trip) => ({ ...trip, busNumber: bus.busNumber, routeName: bus.routeName }));
+  }).sort((a, b) => {
+    const timeA = a.stopTimes?.[0]?.time || "";
+    const timeB = b.stopTimes?.[0]?.time || "";
+    return timeA.localeCompare(timeB);
+  });
 
   return (
     <div className="centered-page">
@@ -391,77 +398,50 @@ function SchedulePage({ buses }) {
         <div className="corner-accent corner-br" style={{ borderColor: "var(--blue)" }} />
 
         <div className="center-form-inner">
-        <div className="form-row" style={{ marginBottom: "1.5rem" }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label><span className="label-icon">🚌</span> Select Bus</label>
+
+          {/* Direction selector */}
+          <div className="form-group" style={{ marginBottom: "1.5rem" }}>
+            <label><span className="label-icon">🧭</span> Select Direction</label>
             <div className="select-wrap">
-              <select value={busId} onChange={e => setBusId(e.target.value)}>
-                <option value="">— Choose a bus —</option>
-                {buses.map(b => (
-                  <option key={b._id} value={b._id}>{b.busNumber} · {b.routeName}</option>
+              <select value={direction} onChange={e => setDirection(e.target.value)}>
+                {DIRECTIONS.map(d => (
+                  <option key={d} value={d}>{DIRECTION_LABELS[d]}</option>
                 ))}
               </select>
             </div>
           </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label><span className="label-icon">🧭</span> Direction Filter</label>
-            <div className="select-wrap">
-              <select value={filterDir} onChange={e => setFilterDir(e.target.value)}>
-                <option value="ALL">All Directions</option>
-                {DIRECTIONS.map(d => <option key={d} value={d}>{DIRECTION_LABELS[d]}</option>)}
-              </select>
+
+          {/* Summary badge */}
+          {!loading && directionTrips.length > 0 && (
+            <div style={{ marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span className="tag" style={{ color: "var(--blue)", background: "rgba(74,144,217,0.12)", borderColor: "rgba(74,144,217,0.25)" }}>
+                {directionTrips.length} trip{directionTrips.length !== 1 ? "s" : ""} · {DIRECTION_LABELS[direction]}
+              </span>
             </div>
-          </div>
-        </div>
+          )}
 
-      {busId && filterDir !== "ALL" && (
-          <div className="card" style={{ marginBottom: "1.5rem" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-              <div>
-                <label><span className="label-icon">📍</span> Check Next Departure From</label>
-                <div className="select-wrap" style={{ minWidth: 160 }}>
-                  <select value={filterStop} onChange={e => setFilterStop(e.target.value)}>
-                    {STOPS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-              </div>
-              {nextDep && (
-                <div className="next-dep-badge">
-                  🕐 Next: <strong>{nextDep.nextDeparture?.time}</strong>
-                  {nextDep.nextDeparture?.wrapsToTomorrow && " (tomorrow)"}
-                </div>
-              )}
+          {/* Loading */}
+          {loading && (
+            <div style={{ textAlign: "center", padding: "3rem", color: "var(--muted)" }}>
+              Loading schedules…
             </div>
-          </div>
-        )}
+          )}
 
-        {!busId && (
-          <div className="empty-state">
-            <div className="empty-icon">🗓</div>
-            <h3>Select a bus</h3>
-            <p>Choose a bus to view its schedule</p>
-          </div>
-        )}
+          {/* Empty state */}
+          {!loading && directionTrips.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-icon">📋</div>
+              <h3>No trips found</h3>
+              <p>No scheduled trips for {DIRECTION_LABELS[direction]} yet</p>
+            </div>
+          )}
 
-        {busId && !loading && filtered.length === 0 && (
-          <div className="empty-state">
-            <div className="empty-icon">📋</div>
-            <h3>No schedule found</h3>
-            <p>No trips have been added for this bus yet</p>
-          </div>
-        )}
-
-        {loading && <div style={{ textAlign: "center", padding: "3rem", color: "var(--muted)" }}>Loading schedule…</div>}
-
-        <div className="schedule-grid">
-          {filtered.map((trip, i) => {
-            const orderedTimes = trip.direction === "TO_VAVUNIYA"
-              ? [...trip.stopTimes].reverse()
-              : trip.stopTimes;
-            return (
+          {/* Trip cards — one per trip, with bus number shown */}
+          <div className="schedule-grid">
+            {directionTrips.map((trip, i) => (
               <div key={trip._id || i} className="trip-card">
                 <div className="trip-card-header">
-                  <span className="trip-direction">{DIRECTION_LABELS[trip.direction]}</span>
+                  <span className="trip-direction">{trip.busNumber}</span>
                   <span className="tag" style={{ color: "var(--muted)", background: "var(--bg2)", borderColor: "var(--border)" }}>
                     {trip.stopTimes.length} stops
                   </span>
@@ -480,9 +460,9 @@ function SchedulePage({ buses }) {
                   ))}
                 </div>
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+
         </div>
       </div>
     </div>
