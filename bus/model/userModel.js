@@ -22,6 +22,10 @@ const userSchema = new mongoose.Schema({
     enum: ["user", "admin"],
     default: "user",
   },
+  blocked: {
+  type: Boolean,
+  default: false,
+},
 }, { timestamps: true });
 
 export default mongoose.model("users", userSchema);

@@ -4,7 +4,6 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User from "../model/userModel.js";
 
-//-----------------TOKEN GENERATOR-----------------------
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRY = "7d";
 
@@ -19,7 +18,7 @@ const signToken = (user) => {
     { expiresIn: JWT_EXPIRY }
   );
 };
-//------------REGISTER------------------------------------------
+
 export const register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -64,7 +63,6 @@ export const register = async (req, res) => {
   }
 };
 
-//-------------------LOGIN-----------------------------------------
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -103,7 +101,6 @@ export const login = async (req, res) => {
   }
 };
 
-//-----------------CURRENT USER---------------------------------------------
 export const me = async (req, res) => {
   res.json({
     user: {

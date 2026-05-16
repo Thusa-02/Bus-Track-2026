@@ -9,6 +9,7 @@ import rateLimit from "express-rate-limit";
 import busRoute from "./routes/busRoute.js";
 import updateRoute from "./routes/updateRoute.js";
 import authRoute from "./routes/authRoute.js";
+import adminRoute from "./routes/adminRoute.js";
 
 // Warn if running in production with a local DB URL
 if (
@@ -37,7 +38,7 @@ const authLimiter = rateLimit({
   message: { message: "Too many requests, please try again later." },
 });
 
-// General limiter for all other API routes
+// General limiter for bus/admin routes
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
@@ -46,17 +47,28 @@ const apiLimiter = rateLimit({
   message: { message: "Too many requests, please try again later." },
 });
 
+// Higher limit for update/polling routes
+// Live page polls every 30s x number of buses, so 200 is too low
+const updateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many requests, please try again later." },
+});
+
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
 app.use("/api/auth", authLimiter, authRoute);
 app.use("/api/bus", apiLimiter, busRoute);
-app.use("/api/update", apiLimiter, updateRoute);
+app.use("/api/update", updateLimiter, updateRoute); // FIX: was hitting 200 req limit
+app.use("/api/admin", adminRoute);
 
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
 });
 
-// Global error handler — catches anything thrown by middleware or routes
+// Global error handler
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);

@@ -3,7 +3,7 @@ import {
   authApi, busApi, updateApi,
   STOPS, DIRECTIONS, DIRECTION_LABELS, CROWD_LEVELS, UPDATE_TYPES,
   getToken, setToken, clearToken, getUser, setUser, clearUser,
-  timeAgo, getDeviceId,
+  timeAgo, getDeviceId, BASE_URL,
 } from "./api.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,12 +64,13 @@ function StopProgress({ currentStop, direction }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Live Page
 // ─────────────────────────────────────────────────────────────────────────────
-function LivePage({ buses }) {
+function LivePage({ buses, user }) {
   const [direction, setDirection] = useState("TO_UNIVERSITY");
   const [directionReports, setDirectionReports] = useState([]);
   const [selectedReportId, setSelectedReportId] = useState("");
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [reviewingId, setReviewingId] = useState("");
   const intervalRef = useRef(null);
 
   const loadDirectionReports = useCallback(async () => {
@@ -126,6 +127,32 @@ function LivePage({ buses }) {
 
   const selectedDirectionLabel = DIRECTION_LABELS[direction] || direction;
   const selectedReport = directionReports.find((report) => report._id === selectedReportId) || directionReports[0];
+  const reviewCounts = (report) => {
+    const reviews = report?.reviews || [];
+    return {
+      trueCount: reviews.filter((review) => review.isTrue).length,
+      falseCount: reviews.filter((review) => !review.isTrue).length,
+      myReview: user ? reviews.find((review) => String(review.userId) === String(user.id)) : null,
+    };
+  };
+  const reviewReport = async (reportId, isTrue) => {
+    if (!user) {
+      toast("Please sign in to review reports", "info");
+      return;
+    }
+
+    setReviewingId(reportId);
+    const { ok, data } = await updateApi.review(reportId, isTrue);
+    setReviewingId("");
+
+    if (!ok) {
+      toast(data.message || "Failed to review report", "error");
+      return;
+    }
+
+    setDirectionReports(reports => reports.map(report => report._id === reportId ? { ...report, reviews: data.reviews || [] } : report));
+    toast(isTrue ? "Marked as true" : "Marked as false", "success");
+  };
   const formatReportDateTime = (timestamp) => {
     if (!timestamp) return "Unknown time";
     return new Date(timestamp).toLocaleString(undefined, {
@@ -166,8 +193,15 @@ function LivePage({ buses }) {
             <span className="section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
               Direction Filter
             </span>
-            <button className="btn btn-ghost btn-sm" onClick={loadDirectionReports} disabled={loading}>
-              {loading ? <><div className="spinner" /> Refreshing...</> : "Refresh"}
+            <button className="btn btn-ghost btn-sm" onClick={() => {
+              // Reset auto-refresh interval so it counts from now
+              clearInterval(intervalRef.current);
+              if (buses.length > 0) {
+                intervalRef.current = setInterval(loadDirectionReports, 30000);
+              }
+              loadDirectionReports();
+            }} disabled={loading}>
+              {loading ? <><div className="spinner" /> Refreshing...</> : "↺ Refresh"}
             </button>
           </div>
 
@@ -215,6 +249,8 @@ function LivePage({ buses }) {
               <div style={{ display: "grid", gap: "0.75rem", marginTop: "1rem" }}>
                 {directionReports.map(report => {
                   const isSelected = report._id === selectedReport?._id;
+                  const { trueCount, falseCount, myReview } = reviewCounts(report);
+                  const isOwnReport = user && String(report.userId) === String(user.id);
                   return (
                   <div
                     key={report._id}
@@ -244,144 +280,60 @@ function LivePage({ buses }) {
                       <span>Updated: {formatReportDateTime(report.timestamp)} ({timeAgo(report.timestamp)})</span>
                       <span>Reported by {report.reportedBy}</span>
                     </div>
+                    {report.description && (
+                      <div style={{
+                        marginTop: "0.75rem",
+                        padding: "0.75rem",
+                        borderRadius: 8,
+                        border: "1px solid rgba(232,184,75,0.28)",
+                        background: "rgba(232,184,75,0.10)",
+                        color: "var(--text)",
+                        fontSize: "0.82rem",
+                        lineHeight: 1.45,
+                      }}>
+                        <strong style={{ color: "var(--accent)" }}>Notice:</strong> {report.description}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginTop: "0.85rem", borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
+                      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                        <span className="tag tag-seats">True {trueCount}</span>
+                        <span className="tag tag-crowded">False {falseCount}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: "0.5rem" }}>
+                        <button
+                          className={`btn btn-ghost btn-sm ${myReview?.isTrue === true ? "submit-success" : ""}`}
+                          onClick={e => { e.stopPropagation(); reviewReport(report._id, true); }}
+                          disabled={reviewingId === report._id || isOwnReport}
+                        >
+                          True
+                        </button>
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={e => { e.stopPropagation(); reviewReport(report._id, false); }}
+                          disabled={reviewingId === report._id || isOwnReport}
+                          style={myReview?.isTrue === false ? { boxShadow: "0 0 0 1px rgba(240,64,64,0.45)" } : undefined}
+                        >
+                          False
+                        </button>
+                      </div>
+                    </div>
+                    {isOwnReport && (
+                      <div style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: "0.68rem", marginTop: "0.5rem" }}>
+                        Other users can review your report.
+                      </div>
+                    )}
                   </div>
                   );
                 })}
               </div>
             )}
+
           </div>
         </div>
       </div>
     </div>
   );
 
-  /* return (
-    <div className="centered-page">
-      <div className="ambient-orb orb-1" style={{ background: "radial-gradient(circle, rgba(62,207,142,0.13) 0%, transparent 70%)" }} />
-      <div className="ambient-orb orb-2" style={{ background: "radial-gradient(circle, rgba(232,184,75,0.10) 0%, transparent 70%)" }} />
-
-      <div className="page-header-centered">
-        <div className="page-eyebrow">
-          <span className="eyebrow-dot" style={{ background: "var(--green)", boxShadow: "0 0 8px var(--green)" }} />
-          REAL-TIME TRACKING
-        </div>
-        <h1 className="hero-title" style={{ textAlign: "center", marginBottom: "0.5rem" }}>
-          Live <em>Tracker</em>
-        </h1>
-        <p className="hero-sub" style={{ textAlign: "center" }}>
-          Real-time bus location · Vavuniya–University
-        </p>
-      </div>
-
-      <div className="center-form-shell" style={{ maxWidth: 680 }}>
-        <div className="corner-accent corner-tl" style={{ borderColor: "var(--green)" }} />
-        <div className="corner-accent corner-tr" style={{ borderColor: "var(--green)" }} />
-        <div className="corner-accent corner-bl" style={{ borderColor: "var(--green)" }} />
-        <div className="corner-accent corner-br" style={{ borderColor: "var(--green)" }} />
-
-        <div className="center-form-inner">
-        <div className="section-header">
-          <span className="section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            🚌 Select Bus
-          </span>
-          {loading && <div className="spinner" style={{ color: "var(--accent)" }} />}
-        </div>
-        <div className="select-wrap" style={{ marginBottom: "1.5rem" }}>
-          <select value={busId} onChange={e => setBusId(e.target.value)}>
-            <option value="">— Choose a bus —</option>
-            {buses.map(b => (
-              <option key={b._id} value={b._id}>{b.busNumber} · {b.routeName}</option>
-            ))}
-          </select>
-        </div>
-
-      {!busId && (
-          <div className="empty-state">
-            <div className="empty-icon">🚌</div>
-            <h3>Select a bus</h3>
-            <p>Choose a bus above to see live tracking data</p>
-          </div>
-        )}
-
-        {busId && !liveData && !loading && (
-          <div className="empty-state">
-            <div className="empty-icon">📡</div>
-            <h3>No data available</h3>
-            <p>No location updates have been submitted for this bus yet</p>
-          </div>
-        )}
-
-        {liveData && (
-          <div className="live-panel">
-            <div
-              className="data-badge"
-              style={{
-                color:       isStale ? "var(--red)"    : "var(--green)",
-                background:  isStale ? "rgba(240,64,64,0.12)" : "rgba(62,207,142,0.10)",
-                borderColor: isStale ? "rgba(240,64,64,0.25)" : "rgba(62,207,142,0.25)",
-              }}
-            >
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
-              {isStale ? "STALE DATA" : "LIVE"} · Last report: {liveData.lastReportedAt ? timeAgo(liveData.lastReportedAt) : "—"}
-            </div>
-
-            <div className="eta-display">
-              {liveData.eta?.message || "ETA unavailable"}
-            </div>
-
-            <StopProgress currentStop={liveData?.currentStop} direction={liveData?.direction || "TO_UNIVERSITY"} />
-
-            <div className="grid-3">
-              <div className="card">
-                <div className="card-label">Current Stop</div>
-                <div className="card-value" style={{ color: "var(--accent)" }}>{liveData.currentStop || "—"}</div>
-              </div>
-              <div className="card">
-                <div className="card-label">Direction</div>
-                <div className="card-value" style={{ fontSize: "0.95rem" }}>
-                  {DIRECTION_LABELS[liveData.direction] || liveData.direction || "—"}
-                </div>
-              </div>
-              <div className="card">
-                <div className="card-label">Update Type</div>
-                <div className="card-value" style={{ fontSize: "0.95rem", textTransform: "capitalize" }}>
-                  {liveData.updateType || "—"}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid-2">
-              <div className="card">
-                <div className="card-label">Crowd Level</div>
-                <div className="card-value" style={{ fontSize: "1rem" }}>{liveData.crowdLevel || "—"}</div>
-                <div className="crowd-bar">
-                  {crowdSegments().map((color, i) => (
-                    <div key={i} className={`crowd-seg ${color ? `fill-${color}` : ""}`} />
-                  ))}
-                </div>
-              </div>
-              <div className="card">
-                <div className="card-label">Data Reliability</div>
-                <div className="card-value" style={{ fontSize: "1rem" }}>
-                  {liveData.reliability?.label || "—"}
-                </div>
-                <div className="rel-dots">
-                  {[0, 1, 2].map(i => (
-                    <div key={i} className={`rel-dot ${i < (liveData.reliability?.score || 0) ? "fill" : ""}`} />
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-*/
 }
 
 // Schedule Page
@@ -544,6 +496,7 @@ function ReportPage({ buses, user }) {
   const [form, setForm] = useState({
     busId: "", currentStop: "", direction: "TO_UNIVERSITY",
     updateType: "spotted", crowdLevel: "seats_available",
+    description: "",
   });
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -564,7 +517,7 @@ function ReportPage({ buses, user }) {
       toast("Update submitted successfully!", "success");
       setSubmitted(true);
       setTimeout(() => setSubmitted(false), 2000);
-      setForm(p => ({ ...p, busId: "", currentStop: "" }));
+      setForm(p => ({ ...p, busId: "", currentStop: "", description: "" }));
     } else {
       toast(data.message || "Failed to submit update", "error");
     }
@@ -673,6 +626,22 @@ function ReportPage({ buses, user }) {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>
+              <span className="label-icon">!</span> Description
+            </label>
+            <textarea
+              value={form.description}
+              onChange={e => set("description", e.target.value)}
+              maxLength={300}
+              rows={3}
+              placeholder="Example: bus breakdown, delay, route issue..."
+            />
+            <div style={{ textAlign: "right", color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: "0.65rem", marginTop: "0.35rem" }}>
+              {form.description.length}/300
             </div>
           </div>
 
@@ -972,9 +941,9 @@ function HistoryPage({ buses }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Admin Page — Manage Buses + Schedules
+// Bus Admin Page — Manage Buses + Schedules
 // ─────────────────────────────────────────────────────────────────────────────
-function AdminPage({ buses, onReload }) {
+function BusAdminPage({ buses, onReload }) {
   const [editModal, setEditModal] = useState(null);
   const [editLoading, setEditLoading] = useState(false);
   const [schedModal, setSchedModal] = useState(null);
@@ -1243,6 +1212,853 @@ function AdminPage({ buses, onReload }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Admin Page — User Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── tiny api helpers ────────────────────────────────────────────────────────
+const API = BASE_URL; // from api.js — already includes /api
+  
+  async function adminApi(path, opts = {}) {
+    const res = await fetch(`${API}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getToken()}`,
+        ...(opts.headers ?? {}),
+      },
+      ...opts,
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  }
+  
+  // ── constants ───────────────────────────────────────────────────────────────
+  const AUTO_BLOCK_FALSE_THRESHOLD = 5;
+  
+  // ── helpers ──────────────────────────────────────────────────────────────────
+  const falsePct = (u) =>
+    u.reports === 0
+      ? 0
+      : Math.round((u.falseReviews / (u.trueReviews + u.falseReviews || 1)) * 100);
+  
+  const trustLabel = (u) => {
+    if (u.reports === 0) return { label: "No data", color: "var(--muted)" };
+    const pct = falsePct(u);
+    if (pct >= 60) return { label: "Untrusted", color: "var(--red)" };
+    if (pct >= 40) return { label: "Suspicious", color: "var(--amber)" };
+    if (pct >= 20) return { label: "Fair", color: "var(--accent)" };
+    return { label: "Trusted", color: "var(--green)" };
+  };
+  
+  const initials = (name = "") =>
+    name
+      .split(" ")
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase();
+  
+  // ── mini bar ─────────────────────────────────────────────────────────────────
+  function MiniBar({ value, total, color }) {
+    const pct = total === 0 ? 0 : Math.min((value / total) * 100, 100);
+    return (
+      <div
+        style={{
+          height: 4,
+          borderRadius: 2,
+          background: "var(--bg3)",
+          overflow: "hidden",
+          flex: 1,
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            width: `${pct}%`,
+            background: color,
+            borderRadius: 2,
+            transition: "width 0.4s ease",
+          }}
+        />
+      </div>
+    );
+  }
+  
+  // ── stat card ────────────────────────────────────────────────────────────────
+  function StatCard({ label, value, accent }) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "1.25rem 1rem" }}>
+        <div className="card-label">{label}</div>
+        <div
+          className="card-value"
+          style={{ fontSize: "1.8rem", color: accent || "var(--text)" }}
+        >
+          {value}
+        </div>
+      </div>
+    );
+  }
+  
+  // ── user row ─────────────────────────────────────────────────────────────────
+  function UserRow({ user, onBlock, onUnblock, blocking }) {
+    const trust = trustLabel(user);
+    const pct = falsePct(user);
+    const autoFlagged =
+      user.falseReviews >= AUTO_BLOCK_FALSE_THRESHOLD && !user.blocked;
+    const total = user.trueReviews + user.falseReviews;
+  
+    return (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "2.2rem 1fr auto",
+          gap: "1rem",
+          alignItems: "center",
+          padding: "1rem 1.25rem",
+          borderBottom: "1px solid var(--border)",
+          background: user.blocked
+            ? "rgba(240,64,64,0.04)"
+            : autoFlagged
+            ? "rgba(240,180,41,0.04)"
+            : "transparent",
+          transition: "background 0.2s",
+        }}
+      >
+        {/* Avatar */}
+        <div
+          style={{
+            width: "2.2rem",
+            height: "2.2rem",
+            borderRadius: 8,
+            background: user.blocked
+              ? "rgba(240,64,64,0.15)"
+              : "rgba(232,184,75,0.12)",
+            border: `1px solid ${
+              user.blocked ? "rgba(240,64,64,0.3)" : "rgba(232,184,75,0.2)"
+            }`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontFamily: "var(--font-display)",
+            fontWeight: 700,
+            fontSize: "0.7rem",
+            color: user.blocked ? "var(--red)" : "var(--accent)",
+            flexShrink: 0,
+          }}
+        >
+          {initials(user.name)}
+        </div>
+  
+        {/* Info */}
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              flexWrap: "wrap",
+              marginBottom: "0.3rem",
+            }}
+          >
+            <span
+              style={{
+                fontFamily: "var(--font-display)",
+                fontWeight: 600,
+                fontSize: "0.88rem",
+                color: user.blocked ? "var(--muted)" : "var(--text)",
+                textDecoration: user.blocked ? "line-through" : "none",
+              }}
+            >
+              {user.name}
+            </span>
+  
+            {user.role === "admin" && (
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.6rem",
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                  background: "rgba(74,144,217,0.15)",
+                  color: "var(--blue)",
+                  border: "1px solid rgba(74,144,217,0.25)",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                ADMIN
+              </span>
+            )}
+  
+            {user.blocked && (
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.6rem",
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                  background: "rgba(240,64,64,0.15)",
+                  color: "var(--red)",
+                  border: "1px solid rgba(240,64,64,0.25)",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                BLOCKED
+              </span>
+            )}
+  
+            {autoFlagged && (
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.6rem",
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                  background: "rgba(240,180,41,0.15)",
+                  color: "var(--amber)",
+                  border: "1px solid rgba(240,180,41,0.25)",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                ⚠ AUTO-FLAG
+              </span>
+            )}
+  
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.6rem",
+                color: trust.color,
+                letterSpacing: "0.04em",
+              }}
+            >
+              {trust.label}
+            </span>
+          </div>
+  
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.65rem",
+              color: "var(--muted)",
+              marginBottom: "0.45rem",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {user.email}
+          </div>
+  
+          {/* Stat row */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.75rem",
+              flexWrap: "wrap",
+            }}
+          >
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.65rem",
+                color: "var(--muted)",
+              }}
+            >
+              {user.reports} report{user.reports !== 1 ? "s" : ""}
+            </span>
+  
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.65rem",
+                color: "var(--green)",
+              }}
+            >
+              ✓ {user.trueReviews}
+            </span>
+  
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.65rem",
+                color: "var(--red)",
+              }}
+            >
+              ✗ {user.falseReviews}
+            </span>
+  
+            {total > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 80 }}>
+                <MiniBar value={user.trueReviews} total={total} color="var(--green)" />
+                <MiniBar value={user.falseReviews} total={total} color="var(--red)" />
+                <span
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "0.6rem",
+                    color: pct >= 50 ? "var(--red)" : "var(--muted)",
+                    flexShrink: 0,
+                  }}
+                >
+                  {pct}% false
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+  
+        {/* Action */}
+        {user.role !== "admin" && (
+          <div style={{ flexShrink: 0 }}>
+            {user.blocked ? (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: "var(--green)", borderColor: "rgba(62,207,142,0.3)", fontSize: "0.72rem" }}
+                onClick={() => onUnblock(user._id)}
+                disabled={blocking === user._id}
+              >
+                {blocking === user._id ? (
+                  <><div className="spinner" /> Unblocking…</>
+                ) : (
+                  "Unblock"
+                )}
+              </button>
+            ) : (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: "var(--red)", borderColor: "rgba(240,64,64,0.3)", fontSize: "0.72rem" }}
+                onClick={() => onBlock(user._id)}
+                disabled={blocking === user._id}
+              >
+                {blocking === user._id ? (
+                  <><div className="spinner" /> Blocking…</>
+                ) : (
+                  "Block"
+                )}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+// ── main component ────────────────────────────────────────────────────────────
+function AdminPage({ toast }) {
+    const [users, setUsers] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [blocking, setBlocking] = useState(null); // userId currently being toggled
+    const [search, setSearch] = useState("");
+    const [filter, setFilter] = useState("all"); // all | flagged | blocked | trusted
+    const [sortBy, setSortBy] = useState("falseReviews"); // falseReviews | reports | score
+  
+    const load = useCallback(async () => {
+      setLoading(true);
+      const { ok, data } = await adminApi("/admin/users");
+      setLoading(false);
+      if (ok && Array.isArray(data)) {
+        setUsers(data);
+      } else {
+        toast?.("Failed to load user data", "error");
+      }
+    }, []);
+  
+    useEffect(() => { load(); }, [load]);
+  
+    const handleBlock = async (userId) => {
+      setBlocking(userId);
+      const { ok, data } = await adminApi(`/admin/users/${userId}/block`, {
+        method: "PUT",
+        body: JSON.stringify({ blocked: true }),
+      });
+      setBlocking(null);
+      if (ok) {
+        setUsers((prev) =>
+          prev.map((u) => (u._id === userId ? { ...u, blocked: true } : u))
+        );
+        toast?.("User blocked", "success");
+      } else {
+        toast?.(data.message || "Failed to block user", "error");
+      }
+    };
+  
+    const handleUnblock = async (userId) => {
+      setBlocking(userId);
+      const { ok, data } = await adminApi(`/admin/users/${userId}/block`, {
+        method: "PUT",
+        body: JSON.stringify({ blocked: false }),
+      });
+      setBlocking(null);
+      if (ok) {
+        setUsers((prev) =>
+          prev.map((u) => (u._id === userId ? { ...u, blocked: false } : u))
+        );
+        toast?.("User unblocked", "success");
+      } else {
+        toast?.(data.message || "Failed to unblock user", "error");
+      }
+    };
+  
+    // ── derived stats ───────────────────────────────────────────────────────────
+    const nonAdmins = users.filter((u) => u.role !== "admin");
+    const totalReports = nonAdmins.reduce((s, u) => s + u.reports, 0);
+    const blockedCount = nonAdmins.filter((u) => u.blocked).length;
+    const flaggedCount = nonAdmins.filter(
+      (u) => u.falseReviews >= AUTO_BLOCK_FALSE_THRESHOLD && !u.blocked
+    ).length;
+    const untrustedCount = nonAdmins.filter((u) => falsePct(u) >= 60 && !u.blocked).length;
+  
+    // ── filtered + sorted ───────────────────────────────────────────────────────
+    const visible = users
+      .filter((u) => {
+        const q = search.toLowerCase();
+        if (q && !u.name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q))
+          return false;
+        if (filter === "flagged")
+          return u.falseReviews >= AUTO_BLOCK_FALSE_THRESHOLD && !u.blocked;
+        if (filter === "blocked") return u.blocked;
+        if (filter === "trusted") return falsePct(u) < 20 && u.reports > 0 && !u.blocked;
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortBy === "falseReviews") return b.falseReviews - a.falseReviews;
+        if (sortBy === "reports") return b.reports - a.reports;
+        if (sortBy === "score") return b.score - a.score;
+        return 0;
+      });
+  
+    return (
+      <div style={{ animation: "fadeIn 0.35s ease" }}>
+        {/* ── Header ── */}
+        <div className="hero" style={{ marginBottom: "2rem" }}>
+          <div>
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.65rem",
+                color: "var(--muted)",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                marginBottom: "0.6rem",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "var(--red)",
+                  display: "inline-block",
+                  animation: "pulse 2s infinite",
+                }}
+              />
+              Admin Control Centre
+            </div>
+            <h1 className="hero-title">
+              User <em>Management</em>
+            </h1>
+            <p className="hero-sub">Monitor reporters · block suspicious activity</p>
+          </div>
+  
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={load}
+            disabled={loading}
+            style={{ alignSelf: "flex-end" }}
+          >
+            {loading ? <><div className="spinner" /> Loading…</> : "↺ Refresh"}
+          </button>
+        </div>
+  
+        {/* ── Summary stats ── */}
+        <div className="grid-3" style={{ marginBottom: "2rem" }}>
+          <StatCard label="Total users" value={nonAdmins.length} />
+          <StatCard label="Total reports" value={totalReports} accent="var(--accent)" />
+          <StatCard
+            label="Auto-flagged"
+            value={flaggedCount}
+            accent={flaggedCount > 0 ? "var(--amber)" : "var(--muted)"}
+          />
+        </div>
+  
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: "1rem",
+            marginBottom: "2rem",
+          }}
+        >
+          <StatCard
+            label="Blocked users"
+            value={blockedCount}
+            accent={blockedCount > 0 ? "var(--red)" : "var(--muted)"}
+          />
+          <StatCard
+            label="Untrusted (≥60% false)"
+            value={untrustedCount}
+            accent={untrustedCount > 0 ? "var(--red)" : "var(--muted)"}
+          />
+          <StatCard
+            label={`Auto-block at ≥${AUTO_BLOCK_FALSE_THRESHOLD} false`}
+            value="Policy"
+            accent="var(--blue)"
+          />
+        </div>
+  
+        {/* ── Auto-flag notice ── */}
+        {flaggedCount > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "0.75rem",
+              padding: "0.9rem 1.25rem",
+              borderRadius: 10,
+              background: "rgba(240,180,41,0.07)",
+              border: "1px solid rgba(240,180,41,0.2)",
+              marginBottom: "1.5rem",
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.72rem",
+              color: "var(--amber)",
+              lineHeight: 1.6,
+            }}
+          >
+            <span style={{ fontSize: "1rem", flexShrink: 0 }}>⚠</span>
+            <span>
+              <strong>{flaggedCount} user{flaggedCount !== 1 ? "s" : ""}</strong> ha
+              {flaggedCount !== 1 ? "ve" : "s"} accumulated{" "}
+              {AUTO_BLOCK_FALSE_THRESHOLD}+ false reviews and should be reviewed. Use
+              the <strong>Flagged</strong> filter below to inspect them.
+            </span>
+          </div>
+        )}
+  
+        {/* ── Filters + search ── */}
+        <div
+          style={{
+            display: "flex",
+            gap: "0.75rem",
+            flexWrap: "wrap",
+            alignItems: "center",
+            marginBottom: "1.25rem",
+          }}
+        >
+          {/* Search */}
+          <div style={{ flex: 1, minWidth: 180, position: "relative" }}>
+            <input
+              type="text"
+              placeholder="Search by name or email…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: "100%",
+                background: "var(--bg3)",
+                border: "1px solid var(--border2)",
+                borderRadius: 8,
+                color: "var(--text)",
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.78rem",
+                padding: "8px 12px",
+                outline: "none",
+              }}
+            />
+          </div>
+  
+          {/* Filter pills */}
+          <div className="pill-toggle" style={{ flexShrink: 0 }}>
+            {[
+              { id: "all", label: "All" },
+              { id: "flagged", label: `⚠ Flagged (${flaggedCount})` },
+              { id: "blocked", label: `Blocked (${blockedCount})` },
+              { id: "trusted", label: "Trusted" },
+            ].map(({ id, label }) => (
+              <button
+                key={id}
+                className={`pill-btn ${filter === id ? "pill-active" : ""}`}
+                onClick={() => setFilter(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+  
+          {/* Sort */}
+          <div className="select-wrap" style={{ flexShrink: 0, minWidth: 160 }}>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              style={{
+                background: "var(--bg3)",
+                border: "1px solid var(--border2)",
+                borderRadius: 8,
+                color: "var(--text)",
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.75rem",
+                padding: "8px 12px",
+                outline: "none",
+                width: "100%",
+              }}
+            >
+              <option value="falseReviews">Sort: Most false</option>
+              <option value="reports">Sort: Most reports</option>
+              <option value="score">Sort: Highest score</option>
+            </select>
+          </div>
+        </div>
+  
+        {/* ── User table ── */}
+        <div
+          className="card"
+          style={{ padding: 0, overflow: "hidden", marginBottom: "2rem" }}
+        >
+          {/* Table header */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "2.2rem 1fr auto",
+              gap: "1rem",
+              padding: "0.65rem 1.25rem",
+              borderBottom: "1px solid var(--border)",
+              background: "var(--bg3)",
+            }}
+          >
+            <div />
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.62rem",
+                color: "var(--muted)",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+              }}
+            >
+              Reporter · Reviews · Trust
+            </div>
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.62rem",
+                color: "var(--muted)",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+              }}
+            >
+              Action
+            </div>
+          </div>
+  
+          {loading ? (
+            <div
+              style={{
+                padding: "3rem",
+                textAlign: "center",
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.78rem",
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
+              }}
+            >
+              <div className="spinner" /> Loading users…
+            </div>
+          ) : visible.length === 0 ? (
+            <div
+              style={{
+                padding: "3rem",
+                textAlign: "center",
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.78rem",
+                color: "var(--muted)",
+              }}
+            >
+              No users match this filter.
+            </div>
+          ) : (
+            visible.map((user) => (
+              <UserRow
+                key={user._id}
+                user={user}
+                onBlock={handleBlock}
+                onUnblock={handleUnblock}
+                blocking={blocking}
+              />
+            ))
+          )}
+        </div>
+  
+        {/* ── Legend ── */}
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "1rem",
+            fontFamily: "var(--font-mono)",
+            fontSize: "0.65rem",
+            color: "var(--muted)",
+            paddingTop: "0.5rem",
+          }}
+        >
+          {[
+            { color: "var(--green)", label: "Trusted  (<20% false)" },
+            { color: "var(--accent)", label: "Fair  (20–39%)" },
+            { color: "var(--amber)", label: "Suspicious / Auto-flagged  (40–59%)" },
+            { color: "var(--red)", label: "Untrusted  (≥60%)" },
+          ].map(({ color, label }) => (
+            <span key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: color,
+                  flexShrink: 0,
+                }}
+              />
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Leaderboard Page
+// ─────────────────────────────────────────────────────────────────────────────
+function LeaderboardPage() {
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+  const intervalRef = useRef(null);
+
+  const loadLeaderboard = useCallback(async () => {
+    setLoading(true);
+    const { ok, data } = await updateApi.leaderboard();
+    setLoading(false);
+    if (ok && Array.isArray(data)) {
+      setLeaderboard(data);
+      setLastRefreshedAt(new Date());
+    }
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    // Reset the auto-refresh interval so it counts from now
+    clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(loadLeaderboard, 30000);
+    loadLeaderboard();
+  }, [loadLeaderboard]);
+
+  useEffect(() => {
+    loadLeaderboard();
+    intervalRef.current = setInterval(loadLeaderboard, 30000);
+    return () => clearInterval(intervalRef.current);
+  }, [loadLeaderboard]);
+
+  const medals = ["🥇", "🥈", "🥉"];
+
+  return (
+    <div className="centered-page">
+      <div className="ambient-orb orb-1" style={{ background: "radial-gradient(circle, rgba(232,184,75,0.13) 0%, transparent 70%)" }} />
+      <div className="ambient-orb orb-2" style={{ background: "radial-gradient(circle, rgba(62,207,142,0.10) 0%, transparent 70%)" }} />
+
+      <div className="page-header-centered">
+        <div className="page-eyebrow">
+          <span className="eyebrow-dot" style={{ background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
+          COMMUNITY TRUST
+        </div>
+        <h1 className="hero-title" style={{ textAlign: "center", marginBottom: "0.5rem" }}>
+          Reporter <em>Leaderboard</em>
+        </h1>
+        <p className="hero-sub" style={{ textAlign: "center" }}>
+          Top contributors ranked by verified report accuracy
+        </p>
+      </div>
+
+      <div className="center-form-shell" style={{ maxWidth: 600, boxShadow: "0 0 0 1px rgba(232,184,75,0.06), 0 24px 64px rgba(0,0,0,0.5), 0 0 80px rgba(232,184,75,0.04) inset" }}>
+        <div className="corner-accent corner-tl" style={{ borderColor: "var(--accent)" }} />
+        <div className="corner-accent corner-tr" style={{ borderColor: "var(--accent)" }} />
+        <div className="corner-accent corner-bl" style={{ borderColor: "var(--accent)" }} />
+        <div className="corner-accent corner-br" style={{ borderColor: "var(--accent)" }} />
+
+        <div className="center-form-inner">
+          <div className="section-header" style={{ marginBottom: "1.25rem" }}>
+            <span className="section-title">Top Reporters</span>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.25rem" }}>
+              {lastRefreshedAt && (
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)" }}>
+                  Updated {lastRefreshedAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+              <button className="btn btn-ghost btn-sm" onClick={handleRefresh} disabled={loading}>
+                {loading ? <><div className="spinner" /> Loading…</> : "↺ Refresh"}
+              </button>
+            </div>
+          </div>
+
+          {loading && (
+            <div style={{ textAlign: "center", padding: "3rem", color: "var(--muted)" }}>
+              Loading leaderboard…
+            </div>
+          )}
+
+          {!loading && leaderboard.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-icon">🏆</div>
+              <h3>No data yet</h3>
+              <p>Be the first to submit and get reviewed!</p>
+            </div>
+          )}
+
+          {!loading && leaderboard.length > 0 && (
+            <div style={{ display: "grid", gap: "0.75rem" }}>
+              {leaderboard.map((row, index) => (
+                <div
+                  key={row.userId}
+                  className="card"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "40px 1fr auto",
+                    alignItems: "center",
+                    gap: "1rem",
+                    borderColor: index === 0 ? "rgba(232,184,75,0.45)" : undefined,
+                    boxShadow: index === 0 ? "0 0 0 1px rgba(232,184,75,0.18), 0 0 20px rgba(232,184,75,0.08)" : undefined,
+                  }}
+                >
+                  <div style={{ textAlign: "center", fontSize: index < 3 ? "1.4rem" : "0.85rem", fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--muted)" }}>
+                    {index < 3 ? medals[index] : `#${index + 1}`}
+                  </div>
+                  <div>
+                    <div style={{ color: "var(--text)", fontWeight: 700, fontSize: "0.95rem" }}>{row.name}</div>
+                    <div style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: "0.68rem", marginTop: "0.2rem" }}>
+                      {row.reports} report{row.reports !== 1 ? "s" : ""} · ✅ {row.trueReviews} true · ❌ {row.falseReviews} false
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div className="card-value" style={{ fontSize: "1.1rem", color: row.score >= 0 ? "var(--green)" : "var(--red)" }}>
+                      {row.score > 0 ? `+${row.score}` : row.score}
+                    </div>
+                    <div style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: "0.65rem" }}>score</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ marginTop: "1.5rem", padding: "0.85rem 1rem", borderRadius: 10, background: "rgba(232,184,75,0.06)", border: "1px solid rgba(232,184,75,0.15)", color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: "0.68rem", lineHeight: 1.6 }}>
+            Score = (true reviews received) − (false reviews received). Submit accurate reports to climb the ranks.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Auth Page
 // ─────────────────────────────────────────────────────────────────────────────
 function AuthPage({ onAuth }) {
@@ -1337,13 +2153,71 @@ function AuthPage({ onAuth }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // App Root
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin Bus Panel — sub-tabs: Add Bus | Manage Buses
+// ─────────────────────────────────────────────────────────────────────────────
+function AdminBusPanel({ buses, onReload }) {
+  const [subTab, setSubTab] = useState("add");
+
+  return (
+    <div>
+      {/* Sub-tab bar */}
+      <div style={{
+        display: "flex",
+        justifyContent: "center",
+        gap: "0.5rem",
+        padding: "1.25rem 1rem 0",
+      }}>
+        <div style={{
+          display: "inline-flex",
+          background: "var(--bg2)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: 4,
+          gap: 4,
+        }}>
+          {[
+            { id: "add",    label: "➕  Add Bus"      },
+            { id: "manage", label: "🚌  Manage Buses" },
+          ].map(s => (
+            <button
+              key={s.id}
+              onClick={() => setSubTab(s.id)}
+              style={{
+                padding: "0.45rem 1.2rem",
+                borderRadius: 7,
+                border: "none",
+                cursor: "pointer",
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.78rem",
+                fontWeight: 600,
+                letterSpacing: "0.04em",
+                transition: "all 0.18s ease",
+                background: subTab === s.id ? "var(--accent)" : "transparent",
+                color:      subTab === s.id ? "var(--bg)"     : "var(--muted)",
+                boxShadow:  subTab === s.id ? "0 2px 10px rgba(232,184,75,0.25)" : "none",
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {subTab === "add"    && <AddBusPage onBusAdded={onReload} />}
+      {subTab === "manage" && <BusAdminPage buses={buses} onReload={onReload} />}
+    </div>
+  );
+}
+
 const TABS = [
-  { id: "live",     label: "Live",     public: true  },
-  { id: "schedule", label: "Schedule", public: true  },
-  { id: "report",   label: "Report",   public: false },
-  { id: "add-bus",  label: "Add Bus",  public: false, adminOnly: true },
-  { id: "history",  label: "History",  public: false },
-  { id: "admin",    label: "Admin",    public: false, adminOnly: true },
+  { id: "live",        label: "Live",        public: true  },
+  { id: "schedule",    label: "Schedule",    public: true  },
+  { id: "leaderboard", label: "Leaderboard", public: true  },
+  { id: "report",      label: "Report",      public: false },
+  { id: "add-bus",     label: "Add Bus",     public: false, adminOnly: true },
+  { id: "history",     label: "History",     public: false },
+  { id: "admin",       label: "Admin",       public: false, adminOnly: true },
 ];
 
 export default function App() {
@@ -1385,6 +2259,7 @@ export default function App() {
 
   const visibleTabs = TABS.filter(t => {
     if (t.adminOnly) return user?.role === "admin";
+    if (user?.role === "admin" && (t.id === "schedule" || t.id === "report")) return false;
     return true;
   });
 
@@ -1392,7 +2267,7 @@ export default function App() {
     <>
       <ToastContainer />
 
-      {!user && tab !== "live" && tab !== "schedule" ? (
+      {!user && tab !== "live" && tab !== "schedule" && tab !== "leaderboard" ? (
         <AuthPage onAuth={handleAuth} />
       ) : (
         <>
@@ -1426,9 +2301,24 @@ export default function App() {
                 {busLoading ? "Loading…" : `${buses.length} buses`}
               </div>
               {user ? (
-                <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
-                  Sign Out
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: "var(--accent)", color: "var(--bg)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontWeight: 700, fontSize: "0.75rem", flexShrink: 0,
+                    }}>
+                      {user.name?.[0]?.toUpperCase() ?? "?"}
+                    </div>
+                    <span style={{ fontSize: "0.82rem", color: "var(--text)", fontWeight: 500, maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {user.name}
+                    </span>
+                  </div>
+                  <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
+                    Sign Out
+                  </button>
+                </div>
               ) : (
                 <button className="btn btn-ghost btn-sm" onClick={() => setTab("__auth__")}>
                   Sign In
@@ -1443,12 +2333,15 @@ export default function App() {
 
           {tab !== "__auth__" && (
             <main>
-              {tab === "live"     && <LivePage buses={buses} />}
-              {tab === "schedule" && <SchedulePage buses={buses} />}
-              {tab === "report"   && user && <ReportPage buses={buses} user={user} />}
-              {tab === "add-bus"  && user?.role === "admin" && <AddBusPage onBusAdded={loadBuses} />}
+              {tab === "live"         && <LivePage buses={buses} user={user} />}
+              {tab === "schedule"     && <SchedulePage buses={buses} />}
+              {tab === "leaderboard"  && <LeaderboardPage />}
+              {tab === "report"       && user && <ReportPage buses={buses} user={user} />}
+              {tab === "add-bus"  && user?.role === "admin" && (
+                <AdminBusPanel buses={buses} onReload={loadBuses} />
+              )}
               {tab === "history"  && user && <HistoryPage buses={buses} />}
-              {tab === "admin"    && user?.role === "admin" && <AdminPage buses={buses} onReload={loadBuses} />}
+              {tab === "admin"    && user?.role === "admin" && <AdminPage toast={toast} />}
             </main>
           )}
         </>

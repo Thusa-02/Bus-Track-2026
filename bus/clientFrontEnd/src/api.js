@@ -87,6 +87,8 @@ export const updateApi = {
   create:  (body) => request("POST",   "/update/create", body, true),
   getAll:  (busId) => request("GET",   `/update/getall/${busId}`),
   latest:  (busId) => request("GET",   `/update/latest/${busId}`),
+  review:  (id, isTrue) => request("POST", `/update/${id}/review`, { isTrue }, true),
+  leaderboard: () => request("GET", "/update/leaderboard"),
   delete:  (id)    => request("DELETE",`/update/delete/${id}`, null, true),
 };
 

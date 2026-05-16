@@ -415,7 +415,7 @@ main {
   font-size: 0.8rem;
 }
 
-select, input[type="text"], input[type="email"], input[type="password"] {
+select, textarea, input[type="text"], input[type="email"], input[type="password"] {
   width: 100%;
   background: var(--bg3);
   border: 1px solid var(--border2);
@@ -424,13 +424,22 @@ select, input[type="text"], input[type="email"], input[type="password"] {
   font-family: var(--font-body);
   font-size: 0.875rem;
   padding: 10px 14px;
-  appearance: none;
-  -webkit-appearance: none;
   transition: border-color 0.2s, box-shadow 0.2s;
   outline: none;
 }
 
-select:focus, input:focus {
+select {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 88px;
+  line-height: 1.45;
+}
+
+select:focus, textarea:focus, input:focus {
   border-color: rgba(232,184,75,0.4);
   box-shadow: 0 0 0 3px rgba(232,184,75,0.06);
 }

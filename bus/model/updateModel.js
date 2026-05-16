@@ -30,6 +30,32 @@ const updateSchema = new mongoose.Schema({
     enum: ["seats_available", "standing_only", "fully_crowded"],
     required: true,
   },
+  description: {
+    type: String,
+    trim: true,
+    maxlength: 300,
+    default: "",
+  },
+  reviews: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "users",
+      required: true,
+    },
+    userName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    isTrue: {
+      type: Boolean,
+      required: true,
+    },
+    reviewedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  }],
   deviceId: {
     type: String,
     required: true,

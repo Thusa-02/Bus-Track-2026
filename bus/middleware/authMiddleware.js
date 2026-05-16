@@ -31,6 +31,12 @@ export const authMiddleware = async (req, res, next) => {
       return res.status(401).json({ message: "User no longer exists" });
     }
 
+    if (user.blocked) {
+  return res.status(403).json({
+    message: "Your account has been blocked by an administrator."
+  });
+}
+
     req.user = user;
     next();
   } catch (err) {

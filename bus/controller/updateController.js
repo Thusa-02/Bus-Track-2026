@@ -85,6 +85,7 @@ export const createUpdate = async (req, res) => {
       direction,
       updateType,
       crowdLevel,
+      description = "",
       deviceId,
     } = req.body;
 
@@ -113,6 +114,11 @@ export const createUpdate = async (req, res) => {
 
     if (!CROWD_LEVELS.includes(crowdLevel)) {
       return res.status(400).json({ message: "Invalid crowd level" });
+    }
+
+    const cleanDescription = String(description || "").trim();
+    if (cleanDescription.length > 300) {
+      return res.status(400).json({ message: "Description must be 300 characters or less" });
     }
 
     const stop = normalizeStop(currentStop);
@@ -144,6 +150,7 @@ export const createUpdate = async (req, res) => {
       direction,
       updateType,
       crowdLevel,
+      description: cleanDescription,
       deviceId,
       userId: req.user._id,
       reportedBy: req.user.name,
@@ -176,6 +183,92 @@ export const getUpdates = async (req, res) => {
 };
 
 // ─── GET LATEST ──────────────────────
+export const reviewUpdate = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isTrue } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid update ID" });
+    }
+
+    if (typeof isTrue !== "boolean") {
+      return res.status(400).json({ message: "Review must be true or false" });
+    }
+
+    const update = await Update.findById(id);
+    if (!update) {
+      return res.status(404).json({ message: "Update not found" });
+    }
+
+    const userId = req.user._id.toString();
+    if (update.userId.toString() === userId) {
+      return res.status(403).json({ message: "You cannot review your own report" });
+    }
+
+    const existingReview = update.reviews.find(
+      (review) => review.userId.toString() === userId
+    );
+
+    if (existingReview) {
+      existingReview.isTrue = isTrue;
+      existingReview.userName = req.user.name;
+      existingReview.reviewedAt = new Date();
+    } else {
+      update.reviews.push({
+        userId: req.user._id,
+        userName: req.user.name,
+        isTrue,
+      });
+    }
+
+    const saved = await update.save();
+    res.json(saved);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const getLeaderboard = async (req, res) => {
+  try {
+    const updates = await Update.find({}, "userId reportedBy reviews").lean();
+    const users = new Map();
+
+    updates.forEach((update) => {
+      const key = String(update.userId);
+      if (!users.has(key)) {
+        users.set(key, {
+          userId: key,
+          name: update.reportedBy,
+          reports: 0,
+          trueReviews: 0,
+          falseReviews: 0,
+          score: 0,
+        });
+      }
+
+      const row = users.get(key);
+      row.reports += 1;
+      const reviews = update.reviews || [];
+      const trueReviews = reviews.filter((review) => review.isTrue === true).length;
+      const falseReviews = reviews.filter((review) => review.isTrue === false).length;
+      row.trueReviews += trueReviews;
+      row.falseReviews += falseReviews;
+      row.score += trueReviews - falseReviews;
+    });
+
+    const leaderboard = Array.from(users.values())
+      .sort((a, b) => b.score - a.score || b.trueReviews - a.trueReviews || b.reports - a.reports)
+      .slice(0, 10);
+
+    res.json(leaderboard);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 export const getLatestUpdate = async (req, res) => {
   try {
     const { busId } = req.params;
@@ -241,7 +334,7 @@ export const updateUpdate = async (req, res) => {
       return res.status(403).json({ message: "Not authorised to edit this update" });
     }
 
-    const { currentStop, direction, updateType, crowdLevel } = req.body;
+    const { currentStop, direction, updateType, crowdLevel, description } = req.body;
     const allowedUpdates = {};
 
     if (currentStop !== undefined) {
@@ -266,6 +359,13 @@ export const updateUpdate = async (req, res) => {
         return res.status(400).json({ message: "Invalid crowd level" });
       }
       allowedUpdates.crowdLevel = crowdLevel;
+    }
+    if (description !== undefined) {
+      const cleanDescription = String(description || "").trim();
+      if (cleanDescription.length > 300) {
+        return res.status(400).json({ message: "Description must be 300 characters or less" });
+      }
+      allowedUpdates.description = cleanDescription;
     }
 
     if (Object.keys(allowedUpdates).length === 0) {
