@@ -884,6 +884,7 @@ function HistoryPage({ buses }) {
                       <th>Direction</th>
                       <th>Type</th>
                       <th>Crowd</th>
+                      <th>Description</th>
                       <th>Reporter</th>
                       <th>When</th>
                       <th></th>
@@ -898,6 +899,12 @@ function HistoryPage({ buses }) {
                         </td>
                         <td><span className={`tag tag-${u.updateType}`}>{u.updateType}</span></td>
                         <td>{crowdTag(u.crowdLevel)}</td>
+                        <td style={{ fontSize: "0.8rem", color: "var(--text)", maxWidth: 200 }}>
+                          {u.description
+                            ? <span style={{ display: "block", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{u.description}</span>
+                            : <span style={{ color: "var(--muted)", fontStyle: "italic" }}>—</span>
+                          }
+                        </td>
                         <td style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem", color: "var(--muted)" }}>
                           {u.reportedBy}
                         </td>
