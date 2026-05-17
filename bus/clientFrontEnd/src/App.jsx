@@ -34,25 +34,150 @@ const toast = (msg, type) => _addToast?.(msg, type);
 // ─────────────────────────────────────────────────────────────────────────────
 // Stop Progress Bar
 // ─────────────────────────────────────────────────────────────────────────────
-function StopProgress({ currentStop, direction }) {
-  const orderedStops = direction === "TO_VAVUNIYA" ? [...STOPS].reverse() : STOPS;
-  const activeIdx = currentStop ? orderedStops.indexOf(currentStop) : -1;
+/**
+ * Given a report (currentStop + timestamp) and direction, compute:
+ *  - stopIdx         : which stop index the bus is estimated at right now
+ *  - segmentProgress : 0-1 fraction through the current segment (for the moving dot)
+ */
+function estimatePosition(report, orderedStops) {
+  if (!report?.currentStop || !report?.timestamp) return { stopIdx: -1, segmentProgress: 0 };
+
+  const normalize = s => s?.trim().toLowerCase();
+  const reportedIdx = orderedStops.findIndex(s => normalize(s) === normalize(report.currentStop));
+  if (reportedIdx === -1) return { stopIdx: -1, segmentProgress: 0 };
+
+  const elapsedMinutes = (Date.now() - new Date(report.timestamp).getTime()) / 60000;
+  let remaining = elapsedMinutes;
+  let idx = reportedIdx;
+
+  // Walk forward through segments consuming elapsed time
+  while (idx < orderedStops.length - 1) {
+    const segMins = segmentMinutes(orderedStops[idx], orderedStops[idx + 1]);
+    if (remaining < segMins) {
+      return { stopIdx: idx, segmentProgress: remaining / segMins };
+    }
+    remaining -= segMins;
+    idx++;
+  }
+
+  // Elapsed time exceeds full journey — bus has arrived
+  return { stopIdx: orderedStops.length - 1, segmentProgress: 0 };
+}
+
+function StopProgress({ report, direction }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const orderedStops  = direction === "TO_VAVUNIYA" ? [...STOPS].reverse() : STOPS;
+  const lastIdx       = orderedStops.length - 1;
+  const { stopIdx, segmentProgress } = estimatePosition(report, orderedStops);
+  const isArrived     = stopIdx === lastIdx;
 
   return (
-    <div className="stop-progress">
-      <div className="stop-track">
+    <div style={{ marginTop: "0.75rem", marginBottom: "0.4rem", width: "70%", overflow: "hidden" }}>
+      {/* Row 1: time labels above each segment line — mirrors Row 2 flex structure exactly */}
+      <div style={{ display: "flex", alignItems: "flex-end", marginBottom: 4, width: "100%" }}>
         {orderedStops.map((stop, i) => {
-          const isPassed = activeIdx >= 0 && i < activeIdx;
-          const isActive = i === activeIdx;
+          const isLast   = i === lastIdx;
+          const segMins  = !isLast ? segmentMinutes(orderedStops[i], orderedStops[i + 1]) : null;
+          const isPassed = stopIdx >= 0 && i < stopIdx;
+          const isActive = i === stopIdx;
+          const lineFill = isPassed ? 1 : isActive ? segmentProgress : 0;
           return (
-            <div key={stop} style={{ display: "flex", alignItems: "center", flex: 1 }}>
-              <div className="stop-node">
-                <div className={`stop-circle ${isActive ? "active" : isPassed ? "passed" : ""}`} />
-                <span className={`stop-label ${isActive ? "active" : isPassed ? "passed" : ""}`}>{stop}</span>
-              </div>
-              {i < orderedStops.length - 1 && (
-                <div className={`stop-line ${isPassed || isActive ? "passed" : ""}`} />
+            <div key={stop + "-label"} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
+              {/* 10px spacer matches the circle width so label starts after the circle */}
+              <div style={{ width: 10, flexShrink: 0 }} />
+              {!isLast && (
+                <div style={{ flex: 1, textAlign: "center" }}>
+                  <span style={{
+                    fontFamily: "var(--font-mono)", fontSize: "0.55rem",
+                    color: lineFill > 0 ? "var(--accent)" : "var(--muted)",
+                    opacity: lineFill > 0 ? 0.9 : 0.45,
+                  }}>~{segMins}m</span>
+                </div>
               )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Row 2: circles connected by lines, all on the same horizontal axis */}
+      <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+        {orderedStops.map((stop, i) => {
+          const isPassed    = stopIdx >= 0 && i < stopIdx;
+          const isActive    = i === stopIdx;
+          const isLast      = i === lastIdx;
+          const segMins     = !isLast ? segmentMinutes(orderedStops[i], orderedStops[i + 1]) : null;
+          const lineFill    = isPassed ? 1 : isActive ? segmentProgress : 0;
+          const circleColor = isArrived && isLast ? "var(--green)"
+            : isActive || isPassed ? "var(--accent)"
+            : "var(--border)";
+          const circleGlow  = isArrived && isLast ? "0 0 8px var(--green)"
+            : isActive ? "0 0 8px var(--accent)"
+            : "none";
+
+          return (
+            <div key={stop} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
+              {/* Circle */}
+              <div style={{
+                width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                background: circleColor, boxShadow: circleGlow,
+                border: "2px solid " + circleColor,
+              }} />
+              {/* Segment line */}
+              {!isLast && (
+                <div style={{ flex: 1, position: "relative", height: 2, background: "var(--border)", borderRadius: 2, minWidth: 0 }}>
+                  <div style={{
+                    position: "absolute", left: 0, top: 0, height: "100%",
+                    width: `${lineFill * 100}%`,
+                    background: "var(--accent)", borderRadius: 2,
+                    transition: "width 1.5s linear",
+                  }} />
+                  {isActive && segmentProgress > 0 && segmentProgress < 1 && (
+                    <div style={{
+                      position: "absolute", top: "50%",
+                      left: `${segmentProgress * 100}%`,
+                      transform: "translate(-50%, -50%)",
+                      width: 7, height: 7, borderRadius: "50%",
+                      background: "var(--accent)", boxShadow: "0 0 5px var(--accent)",
+                      transition: "left 1.5s linear",
+                    }} />
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Row 3: stop name labels below each circle */}
+      <div style={{ display: "flex", alignItems: "flex-start", marginTop: 5 }}>
+        {orderedStops.map((stop, i) => {
+          const isPassed = stopIdx >= 0 && i < stopIdx;
+          const isActive = i === stopIdx;
+          const isLast   = i === lastIdx;
+          return (
+            <div key={stop + "-name"} style={{
+              flex: 1,
+              display: "flex",
+              justifyContent: i === 0 ? "flex-start" : isLast ? "flex-end" : "center",
+              overflow: "hidden",
+            }}>
+              <span style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.58rem",
+                textAlign: i === 0 ? "left" : isLast ? "right" : "center",
+                color: isActive || isPassed || (isArrived && isLast) ? "var(--text)" : "var(--muted)",
+                fontWeight: isActive || (isArrived && isLast) ? 600 : 400,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}>
+                {stop}
+              </span>
             </div>
           );
         })}
@@ -64,55 +189,90 @@ function StopProgress({ currentStop, direction }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // ETA Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-const MINUTES_PER_STOP = 5; // average travel time between consecutive stops
+
+/**
+ * Real per-segment travel times (minutes) between consecutive stops
+ * in the TO_UNIVERSITY direction, derived from actual GPS distances
+ * at an average local road speed of ~30 km/h.
+ *
+ * Vavuniya → Kurumankadu : 2.82 km ≈  6 min
+ * Kurumankadu → Veppangulam : 4.27 km ≈  9 min
+ * Veppangulam → Nelukulam : 3.58 km ≈  7 min
+ * Nelukulam → University : 4.30 km ≈  9 min
+ */
+const SEGMENT_MINUTES = {
+  "Vavuniya→Kurumankadu":    6,
+  "Kurumankadu→Veppangulam": 9,
+  "Veppangulam→Nelukulam":   7,
+  "Nelukulam→University":    9,
+};
+
+/**
+ * Returns the travel time in minutes between two adjacent stops,
+ * regardless of direction.
+ */
+function segmentMinutes(fromStop, toStop) {
+  const key  = `${fromStop}→${toStop}`;
+  const rkey = `${toStop}→${fromStop}`;
+  return SEGMENT_MINUTES[key] ?? SEGMENT_MINUTES[rkey] ?? 7;
+}
 
 /**
  * Returns estimated minutes remaining until the bus reaches the final stop,
  * accounting for how stale the report is.
  * Returns null if it cannot be computed.
  */
-function computeEtaMinutes(report, direction) {
+function computeEta(report, direction) {
   if (!report?.currentStop || !report?.timestamp) return null;
 
   const orderedStops = direction === "TO_VAVUNIYA" ? [...STOPS].reverse() : STOPS;
-  const currentIdx   = orderedStops.indexOf(report.currentStop);
+
+  // Fuzzy match: trim + lowercase so minor API spelling differences don't break lookup
+  const normalize = s => s?.trim().toLowerCase();
+  const currentIdx = orderedStops.findIndex(s => normalize(s) === normalize(report.currentStop));
   if (currentIdx === -1) return null;
 
-  const stopsRemaining  = orderedStops.length - 1 - currentIdx;
-  const minutesFromStop = stopsRemaining * MINUTES_PER_STOP;
+  // Build per-segment breakdown
+  const segments = [];
+  for (let i = currentIdx; i < orderedStops.length - 1; i++) {
+    const mins = segmentMinutes(orderedStops[i], orderedStops[i + 1]);
+    segments.push({ from: orderedStops[i], to: orderedStops[i + 1], mins });
+  }
+
+  const totalFromStop = segments.reduce((s, seg) => s + seg.mins, 0);
 
   // Subtract elapsed time since the report was filed
   const ageMs      = Date.now() - new Date(report.timestamp).getTime();
   const ageMinutes = ageMs / 60000;
-  const eta        = Math.round(minutesFromStop - ageMinutes);
+  const etaRaw = totalFromStop - ageMinutes;
+  const eta    = Math.ceil(etaRaw); // ceil so any positive remainder shows as at least 1 min
 
-  return eta; // may be negative (bus likely already arrived)
+  return { eta, segments, destination: orderedStops[orderedStops.length - 1] };
 }
 
 function EtaBadge({ report, direction }) {
-  // Re-render every minute so the badge stays live
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 60000);
     return () => clearInterval(id);
   }, []);
 
-  const eta = computeEtaMinutes(report, direction);
-  if (eta === null) return null;
+  const result = computeEta(report, direction);
+  if (!result) return null;
 
-  const orderedStops  = direction === "TO_VAVUNIYA" ? [...STOPS].reverse() : STOPS;
-  const destination   = orderedStops[orderedStops.length - 1];
+  const { eta, segments, destination } = result;
 
-  if (eta <= 0) {
+  if (eta < 1) {
     return (
       <div style={{
-        display: "flex", alignItems: "center", gap: "0.4rem",
-        padding: "0.45rem 0.75rem", borderRadius: 8,
+        padding: "0.5rem 0.75rem", borderRadius: 8,
         background: "rgba(62,207,142,0.10)", border: "1px solid rgba(62,207,142,0.28)",
         fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--green)",
       }}>
-        <span>🏁</span>
-        <span>Arrived / near <strong>{destination}</strong></span>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <span>🏁</span>
+          <span>Arrived / near <strong>{destination}</strong></span>
+        </div>
       </div>
     );
   }
@@ -123,13 +283,14 @@ function EtaBadge({ report, direction }) {
 
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: "0.4rem",
-      padding: "0.45rem 0.75rem", borderRadius: 8,
+      padding: "0.5rem 0.75rem", borderRadius: 8,
       background: "rgba(74,144,217,0.10)", border: "1px solid rgba(74,144,217,0.28)",
-      fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--blue)",
+      fontFamily: "var(--font-mono)", fontSize: "0.75rem",
     }}>
-      <span>🕐</span>
-      <span>ETA <strong>{label}</strong> to <strong>{destination}</strong></span>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "var(--blue)" }}>
+        <span>🕐</span>
+        <span>ETA <strong>{label}</strong> to <strong>{destination}</strong></span>
+      </div>
     </div>
   );
 }
@@ -300,8 +461,6 @@ function LivePage({ buses, user }) {
               </div>
             )}
 
-            <StopProgress currentStop={selectedReport?.currentStop} direction={direction} />
-
             {!loading && buses.length === 0 && (
               <div className="empty-state">
                 <div className="empty-icon">Bus</div>
@@ -353,9 +512,8 @@ function LivePage({ buses, user }) {
                       <span>Updated: {formatReportDateTime(report.timestamp)} ({timeAgo(report.timestamp)})</span>
                       <span>Reported by {report.reportedBy}</span>
                     </div>
-                    <div style={{ marginTop: "0.65rem" }}>
-                      <EtaBadge report={report} direction={direction} />
-                    </div>
+                    <StopProgress report={report} direction={direction} />
+                    <EtaBadge report={report} direction={direction} />
                     {report.description && (
                       <div style={{
                         marginTop: "0.75rem",
