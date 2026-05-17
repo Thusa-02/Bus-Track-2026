@@ -62,6 +62,79 @@ function StopProgress({ currentStop, direction }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ETA Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+const MINUTES_PER_STOP = 5; // average travel time between consecutive stops
+
+/**
+ * Returns estimated minutes remaining until the bus reaches the final stop,
+ * accounting for how stale the report is.
+ * Returns null if it cannot be computed.
+ */
+function computeEtaMinutes(report, direction) {
+  if (!report?.currentStop || !report?.timestamp) return null;
+
+  const orderedStops = direction === "TO_VAVUNIYA" ? [...STOPS].reverse() : STOPS;
+  const currentIdx   = orderedStops.indexOf(report.currentStop);
+  if (currentIdx === -1) return null;
+
+  const stopsRemaining  = orderedStops.length - 1 - currentIdx;
+  const minutesFromStop = stopsRemaining * MINUTES_PER_STOP;
+
+  // Subtract elapsed time since the report was filed
+  const ageMs      = Date.now() - new Date(report.timestamp).getTime();
+  const ageMinutes = ageMs / 60000;
+  const eta        = Math.round(minutesFromStop - ageMinutes);
+
+  return eta; // may be negative (bus likely already arrived)
+}
+
+function EtaBadge({ report, direction }) {
+  // Re-render every minute so the badge stays live
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  const eta = computeEtaMinutes(report, direction);
+  if (eta === null) return null;
+
+  const orderedStops  = direction === "TO_VAVUNIYA" ? [...STOPS].reverse() : STOPS;
+  const destination   = orderedStops[orderedStops.length - 1];
+
+  if (eta <= 0) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: "0.4rem",
+        padding: "0.45rem 0.75rem", borderRadius: 8,
+        background: "rgba(62,207,142,0.10)", border: "1px solid rgba(62,207,142,0.28)",
+        fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--green)",
+      }}>
+        <span>🏁</span>
+        <span>Arrived / near <strong>{destination}</strong></span>
+      </div>
+    );
+  }
+
+  const hours = Math.floor(eta / 60);
+  const mins  = eta % 60;
+  const label = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: "0.4rem",
+      padding: "0.45rem 0.75rem", borderRadius: 8,
+      background: "rgba(74,144,217,0.10)", border: "1px solid rgba(74,144,217,0.28)",
+      fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--blue)",
+    }}>
+      <span>🕐</span>
+      <span>ETA <strong>{label}</strong> to <strong>{destination}</strong></span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Live Page
 // ─────────────────────────────────────────────────────────────────────────────
 function LivePage({ buses, user }) {
@@ -279,6 +352,9 @@ function LivePage({ buses, user }) {
                       <span>Crowd: {report.crowdLevel}</span>
                       <span>Updated: {formatReportDateTime(report.timestamp)} ({timeAgo(report.timestamp)})</span>
                       <span>Reported by {report.reportedBy}</span>
+                    </div>
+                    <div style={{ marginTop: "0.65rem" }}>
+                      <EtaBadge report={report} direction={direction} />
                     </div>
                     {report.description && (
                       <div style={{
