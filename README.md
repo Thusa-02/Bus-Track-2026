@@ -130,9 +130,9 @@ POST http://localhost:5000/api/auth/register
 
 ```json
 {
-  "name": "Abby",
-  "email": "abby@gmail.com",
-  "password": "abby@123"
+  "name": "User",
+  "email": "user@test.com",
+  "password": "123456"
 }
 ```
 
@@ -154,8 +154,8 @@ POST http://localhost:5000/api/auth/login
 
 ```json
 {
-  "email": "abby@gmail.com",
-  "password": "abby@123"
+  "email": "user@test.com",
+  "password": "123456"
 }
 ```
 
@@ -174,8 +174,8 @@ Authorization: Bearer USER_TOKEN
 ```json
 {
   "_id": "USER_ID",
-  "name": "Abby",
-  "email": "abby@gmail.com",
+  "name": "User",
+  "email": "user@test.com",
   "role": "user"
 }
 ```
@@ -193,8 +193,8 @@ GET http://localhost:5000/api/bus/getall
 [
   {
     "_id": "BUS_ID",
-    "busNumber": "CTB NE-2304",
-    "routeName": "Mannar",
+    "busNumber": "101",
+    "routeName": "Vavuniya - University",
     "status": "active"
   }
 ]
@@ -379,7 +379,7 @@ GET http://localhost:5000/api/update/leaderboard
 ```json
 [
   {
-    "userName": "Abby",
+    "userName": "User",
     "points": 20
   }
 ]
@@ -521,8 +521,8 @@ Authorization: Bearer ADMIN_TOKEN
 [
   {
     "_id": "USER_ID",
-    "name": "Abby",
-    "email": "abby@gmail.com",
+    "name": "User",
+    "email": "user@test.com",
     "role": "user",
     "blocked": false
   }
@@ -585,11 +585,14 @@ VITE_API_URL=http://localhost:5000/api
 ### 4. Run the App
 
 ```bash
-# Terminal 1 — Backend
+# Terminal 1 — MongoDB
+mongod
+
+# Terminal 2 — Backend
 cd bus
 npm start
 
-# Terminal 2 — Frontend
+# Terminal 3 — Frontend
 cd bus/clientFrontEnd
 npm run dev
 ```
@@ -647,14 +650,16 @@ npm run dev
 ```
 bus/
 ├── controller/
+│   ├── adminController.js
 │   ├── authController.js
 │   ├── busController.js
 │   └── updateController.js
 ├── model/
-│   ├── userModel.js
 │   ├── busModel.js
-│   └── updateModel.js
+│   ├── updateModel.js
+│   └── userModel.js
 ├── routes/
+│   ├── adminRoute.js
 │   ├── authRoute.js
 │   ├── busRoute.js
 │   └── updateRoute.js
@@ -665,6 +670,10 @@ bus/
 ├── index.js
 ├── .env
 └── client/          ← React frontend (Vite)
+    ├── index.html
+    ├── package.json
+    ├── package-lock.json
+    ├── vite.config.js
     └── src/
         ├── App.jsx
         ├── api.js
